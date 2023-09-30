@@ -6,6 +6,7 @@ import requests
 import re
 from io import StringIO
 import plotly.express as px
+import os
 # win is:
 # I get this working today
 # 
@@ -47,6 +48,20 @@ def get_contents_from_github_directory():
 # return files
 
 @st.cache_data
+def get_contents_from_local():
+    files = os.listdir("./tennis_data")
+    #create item with filename and file_url
+    items = []
+    for content in files:
+        item = {}
+        item["name"] = content
+        item["download_url"] = f"./tennis_data/{content}"
+        item["type"] = "file"
+        items.append(item)
+    return items
+
+
+@st.cache_data
 def get_filename_url_map_from_contents(contents):
     file_map = {item['name']: item['download_url'] for item in contents if item['type'] == 'file'}
     return file_map
@@ -70,23 +85,29 @@ def get_dataframe_from_url(download_url):
         return df
 
 def get_first_set_win_percentage(winner_name):
-    filtered = cur_scores.loc[ cur_scores["winner_name"] == winner_name ]
+    #filter by winner name and loser name 
+
+    
+    filtered = cur_scores.loc[ (cur_scores["winner_name"] == winner_name) | (cur_scores["loser_name"] == winner_name) ]
     first_set_won_count = sum(filtered["First Set Won"])
     tot_matches = len(filtered)
+    if tot_matches == 0:
+        return 0;
     first_set_win_percentage = first_set_won_count / tot_matches
     return first_set_win_percentage
 
 
-# # Streamlit app
-# st.title("GitHub File Browser")
+# find the player who won the first set
+def get_first_set_winner(row):
+    #get the first set score
+    first_set_score = row["score"].split(" ")[0]
+    #split the first set score
+    first_set = first_set_score.split("-")
+    #extract first digit from string
 
-# files = list_files_in_github_directory()
-# if files:
-#     st.write(f"Files in '{github_directory}':")
-#     for file in files:
-#         st.write(file)
-# else:
-#     st.error("No files found in the specified directory.")
+    #get the first set winner
+    first_set_winner = row["winner_name"] if int(first_set[0][0]) > int(first_set[1][0]) else row["loser_name"]
+    return first_set_winner
 
 contents = get_contents_from_github_directory()
 filename_to_url_map = get_filename_url_map_from_contents(contents)
@@ -127,15 +148,26 @@ if len(selected_urls) > 0:
     #find all the unique winner names
     winner_names = match_data['winner_name'].unique()
 
-    winner_name = st.title("Show Matches by Winner")
+    winner_name = st.title("Show Matches by Player")
 
     #choose a single winner name 
-    winner_name = st.selectbox("Select a winner name", winner_names)
+    winner_name = st.selectbox("Select a player", winner_names)
     st.write(winner_name)
 
-    # select the matches by the winner name
-    match_data = match_data.loc[ match_data["winner_name"] == winner_name ]
-    st.write(match_data)
+    #multiselect best of 3 or 5
+    best_of_player = st.multiselect("Select best of 3 or 5 for the player", [3, 5])
+
+    #select df if name is in winner name or loser name
+    sample_winner_match_data = match_data.loc[ (match_data["winner_name"] == winner_name) | \
+    (match_data["loser_name"] == winner_name) &  (match_data["best_of"].isin(best_of_player)) ]
+
+    #get the first set winner for each row 
+    sample_winner_match_data["first_set_winner"] = sample_winner_match_data.apply(get_first_set_winner, axis=1)
+
+    st.write(sample_winner_match_data[["winner_name", "loser_name", "best_of", "score", "first_set_winner"]])
+
+    # show total number of rows selected
+    st.write(sample_winner_match_data.shape[0])
 
     #-----------------first set win percentage by player-----------------#
 
@@ -148,40 +180,71 @@ if len(selected_urls) > 0:
 
     #filter by number of matches played with steamlit slider 
 
-    #get min number of matches 
-    min_num_matches = min(match_data['winner_name'].value_counts())
-    max_num_matches = max(match_data['winner_name'].value_counts())
+    # get all names that appear in winner name and loser name
+    all_names = pd.concat([match_data['winner_name'], match_data['loser_name']])
+    #get the number of times each name appears
+    name_counts = all_names.value_counts()
+    #get the minimum and maximum number of matches played
+    min_num_matches = name_counts.min()
+    max_num_matches = name_counts.max()
+
+    #show 20 name counts 
+    st.write(name_counts.head(20))
 
     #create a slider to select the minimum number of matches
     min_matches = st.slider("Minimum number of matches", min_num_matches, max_num_matches, 10)
 
-    #choose winner names by min number of matches 
-    winner_names = match_data['winner_name'].value_counts().loc[lambda x: x > min_matches].index
+    winner_names = name_counts.loc[ name_counts >= min_matches ].index.tolist()
 
-    #filter by best of and winner names 
-    cur_scores = cur_scores.loc[ (cur_scores["best_of"].isin(best_of)) & (cur_scores["winner_name"].isin(winner_names)) ]
 
-    #print first 10 rows of the data
-    st.write(cur_scores.head(50))
+    if len(winner_names) > 0 and len(best_of) > 0:
+        #filter by best of and min matches
+        cur_scores = cur_scores.loc[ (cur_scores["best_of"].isin(best_of)) ]
 
-    # #get first set win percentage for each winner name
-    # first_set_win_percentages = [get_first_set_win_percentage(winner_name) for winner_name in winner_names]
+        #find winner names and number of rows for each winner name as a map 
 
-    # total_matches = [len(cur_scores.loc[ cur_scores["winner_name"] == winner_name ]) for winner_name in winner_names]
-    # #create a dataframe with winner name,  first set win percentage, total matches    
-    # first_set_win_percentages_df = pd.DataFrame({"winner_name": winner_names, "first_set_win_percentage": first_set_win_percentages, "total_matches": total_matches})
+        #select by winner_names
 
-    # #filter by number of matches and values of best_of 
-    # first_set_win_percentages_df = first_set_win_percentages_df.loc[ (first_set_win_percentages_df["total_matches"] >= num_matches) & (first_set_win_percentages_df["best_of"] == best_of) ]
-    
-    # #sort by first set win percentage
-    # first_set_win_percentages_df = first_set_win_percentages_df.sort_values(by="first_set_win_percentage", ascending=False)
-    # st.write(first_set_win_percentages_df)
 
-    # # graph win percentage and winner name
-    # fig = px.bar(first_set_win_percentages_df, x="winner_name", y="first_set_win_percentage", title="First Set Win Percentage by Winner Name")
-    # #draw a line at 
-    # st.plotly_chart(fig)
+
+
+
+        # #show total number of rows selected
+        # st.write(cur_scores.shape[0])
+
+
+        # #get first set win percentage for each winner name
+        # print(winner_names)
+
+        first_set_win_percentages = [get_first_set_win_percentage(winner_name) for winner_name in winner_names]
+        # print(first_set_win_percentages)
+        total_wins = [len(cur_scores.loc[ cur_scores["winner_name"] == winner_name ]) for winner_name in winner_names]
+        
+        # # get name counts for each winner name - refactor this to match names
+        total_matches = [name_counts.loc[winner_name] for winner_name in winner_names]
+        
+        # #create a dataframe with winner name,  first set win percentage, total wins, and total_matches    
+        first_set_win_percentages_df = pd.DataFrame({"winner_name": winner_names, \
+             "first_set_win_percentage": first_set_win_percentages, "total_wins": total_wins, "total_matches": total_matches })
+        # print(len(total_wins))
+        # print("delim")
+        # print(len(total_matches))
+        # #sort by first set win percentage
+
+        first_set_win_percentages_df = first_set_win_percentages_df.sort_values(by="first_set_win_percentage", ascending=False)
+        # print("herro")
+        st.write(first_set_win_percentages_df)
+
+        #put a slider for the number of winner_names to show on the graph
+        num_winners_to_show = st.slider("Number of winners to show", 1, len(winner_names), 10)
+
+        #filter first_set_win_percentages_df by num_winners_to_show
+        first_set_win_percentages_df = first_set_win_percentages_df.iloc[:num_winners_to_show]
+
+        # graph win percentage and winner name
+        fig = px.bar(first_set_win_percentages_df, x="winner_name", y="first_set_win_percentage", title="First Set Win Percentage by Winner Name")
+        #draw a line at 
+        st.plotly_chart(fig)
 
 
 
