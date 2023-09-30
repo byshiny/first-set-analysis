@@ -241,6 +241,10 @@ if len(selected_urls) > 0:
         #filter first_set_win_percentages_df by num_winners_to_show
         first_set_win_percentages_df = first_set_win_percentages_df.iloc[:num_winners_to_show]
 
+        st.title("Overall First Set Win Rate for all Players")
+        st.write(sum(total_wins)/ sum(total_matches))
+
+
         # graph win percentage and winner name
         fig = px.bar(first_set_win_percentages_df, x="winner_name", y="first_set_win_percentage", title="First Set Win Percentage by Winner Name")
         #draw a line at 
